@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Logs and runtime state
+*.log
+*.jsonl
+.sibline/
+broker/jetstream/
+
+# Local secrets — should NEVER be committed
+.env
+.env.*
+.config/sibline/cred
+cred
+*.secret
+.nats_creds
+
+# Editor
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# OS
+Thumbs.db

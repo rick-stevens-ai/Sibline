@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  offline-checks:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python syntax
+        run: python -m py_compile clients/kukla-hermes/sibline_subscriber.py clients/ollie-openclaw/sibline_subscriber.py scripts/smoke.py
+      - name: Shell syntax
+        run: bash -n scripts/verify-symmetry.sh broker/provision-streams.sh
+      - name: Plist syntax
+        run: plutil -lint broker/*.plist clients/kukla-hermes/*.plist clients/ollie-openclaw/*.plist
+      - name: High-confidence secret scan
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+          patterns = [
+              re.compile(r'xox[baprs]-'),
+              re.compile(r'ghp_[A-Za-z0-9_]{20,}'),
+              re.compile(r'github_pat_'),
+              re.compile(r'Bearer [A-Za-z0-9._-]{20,}'),
+              re.compile(r'SIBLING_NATS_PASS=(?!YOUR_)(?!\.\.\.)[A-Za-z0-9+/]{12,}'),
+              re.compile(r'password:\s*"(?!(REPLACE_|YOUR_))[^"\n]+"'),
+          ]
+          bad=[]
+          for path in pathlib.Path('.').rglob('*'):
+              if str(path) in {'scripts/pre-commit-secret-scan.sh', '.github/workflows/ci.yml'}:
+                  continue
+              if '.git' in path.parts or not path.is_file():
+                  continue
+              try: text = path.read_text(errors='ignore')
+              except Exception: continue
+              for i,line in enumerate(text.splitlines(),1):
+                  if any(p.search(line) for p in patterns):
+                      bad.append(f'{path}:{i}:{line}')
+          if bad:
+              print('\n'.join(bad)); sys.exit(1)
+          PY

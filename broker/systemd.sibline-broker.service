@@ -1,0 +1,32 @@
+# Sibline NATS broker — systemd unit (Linux).
+# Install:
+#   1. Copy nats-server.conf to /etc/sibline/nats-server.conf and edit credentials.
+#   2. Create user `sibline`: useradd -r -s /usr/sbin/nologin sibline
+#   3. chown -R sibline:sibline /var/lib/sibline /var/log/sibline
+#   4. Copy this file to /etc/systemd/system/sibline-broker.service
+#   5. systemctl daemon-reload && systemctl enable --now sibline-broker
+[Unit]
+Description=Sibline NATS broker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sibline
+Group=sibline
+ExecStart=/usr/local/bin/nats-server -c /etc/sibline/nats-server.conf
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/sibline/broker.out
+StandardError=append:/var/log/sibline/broker.err
+WorkingDirectory=/var/lib/sibline
+
+# Hardening — broker only needs its own data dir + log dir
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/sibline /var/log/sibline
+
+[Install]
+WantedBy=multi-user.target
