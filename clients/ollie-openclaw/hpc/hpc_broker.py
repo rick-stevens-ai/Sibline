@@ -5,16 +5,16 @@ Test-safe v0:
   - Input: memory/kukla-background-inbox.jsonl records where kind == "hpc.request"
            or envelope payload.kind == "hpc.request".
   - Actions: dry_run, submit_smoke, status, fetch_output.
-  - Transports: ssh, iri.
-  - Clusters: polaris, aurora; crux via IRI only.
+  - Transports: ssh, iri, globus_compute.
+  - Clusters: polaris, aurora; crux via IRI only; nuc13 via Globus Compute only.
   - No arbitrary CherryRd shell and no arbitrary PBS script execution in v0.
   - Replies to Kukla using scripts/sibline-send.py.
 
 Request body shape:
 {
   "action": "dry_run" | "submit_smoke" | "status" | "fetch_output",
-  "transport": "ssh" | "iri",
-  "cluster": "polaris" | "aurora" | "crux",
+  "transport": "ssh" | "iri" | "globus_compute",
+  "cluster": "polaris" | "aurora" | "crux" | "nuc13",
   "request_id": "optional stable id",
   "allocation": "optional allowlisted positive-balance project",
   "queue": "debug",
@@ -46,29 +46,42 @@ JOBS_DIR = STATE_DIR / "jobs"
 PROCESSED = STATE_DIR / "processed.json"
 SIBLINE_SEND = WS / "scripts" / "sibline-send.py"
 
-ALLOW_CLUSTERS = {"polaris", "aurora", "crux"}
+ALLOW_CLUSTERS = {"polaris", "aurora", "crux", "nuc13"}
 ALLOW_ACTIONS = {"dry_run", "submit_smoke", "status", "fetch_output"}
-ALLOW_TRANSPORTS = {"ssh", "iri"}
+ALLOW_TRANSPORTS = {"ssh", "iri", "globus_compute"}
 ALLOW_QUEUES = {
     "polaris": {"debug", "preemptable"},
     "aurora": {"debug", "small", "capacity"},
     "crux": {"debug", "default", "workq"},
+    "nuc13": {"local"},
 }
 # Use only known positive balances from 2026-06-06 checks. Revalidated before submit via sbank.
 ALLOW_ALLOCATIONS = {
     "polaris": {"IMPROVE_Aim1", "ModCon", "AuroraGPT"},
     "aurora": {"AuroraGPT", "CompBioAffin", "datascience_collab", "ModCon"},
     "crux": {"IMPROVE_Aim1", "ModCon", "AuroraGPT"},
+    "nuc13": {"local"},
 }
 DEFAULT_ALLOCATION = {
     "polaris": "IMPROVE_Aim1",
     "aurora": "AuroraGPT",
     "crux": "IMPROVE_Aim1",
+    "nuc13": "local",
 }
 DEFAULT_QUEUE = {
     "polaris": "debug",
     "aurora": "debug",
     "crux": "debug",
+    "nuc13": "local",
+}
+
+GLOBUS_COMPUTE_ENDPOINTS = {
+    "nuc13": {
+        "endpoint_id": "4cf42bb1-0415-427a-b30c-c4660af2a33b",
+        "host": "nuc13",
+        "venv_python": "/home/stevens/.globus_compute_venv/bin/python",
+        "description": "LocalProvider endpoint on stevens-NUC13RNGi9",
+    },
 }
 JOBID_RE = re.compile(r"^[0-9]+(?:\.[A-Za-z0-9_.-]+)?$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,96}$")
@@ -161,6 +174,12 @@ def validate_common(body: dict[str, Any]) -> tuple[str, str, str, str, str]:
         raise ValueError(f"cluster not allowed: {cluster!r}")
     if transport == "ssh" and cluster == "crux":
         raise ValueError("ssh transport is not configured for crux in this broker; use transport='iri'")
+    if transport == "ssh" and cluster == "nuc13":
+        raise ValueError("ssh transport is intentionally not exposed through the Sibline HPC broker for nuc13; use transport='globus_compute'")
+    if transport == "iri" and cluster == "nuc13":
+        raise ValueError("IRI is ALCF-only and is not available for nuc13; use transport='globus_compute'")
+    if transport == "globus_compute" and cluster not in GLOBUS_COMPUTE_ENDPOINTS:
+        raise ValueError(f"Globus Compute endpoint not allowlisted for cluster {cluster!r}")
     queue = str(body.get("queue") or DEFAULT_QUEUE[cluster]).strip()
     if queue not in ALLOW_QUEUES[cluster]:
         raise ValueError(f"queue {queue!r} not allowed for {cluster}")
@@ -339,6 +358,95 @@ def iri_fetch_output(body: dict[str, Any]) -> dict[str, Any]:
     return alcf_iri.view_file(path, storage=str(body.get("storage") or "home"), wait=True, timeout_seconds=60)
 
 
+def globus_compute_remote(cluster: str, code: str, timeout: int = 90) -> dict[str, Any]:
+    cfg = GLOBUS_COMPUTE_ENDPOINTS[cluster]
+    remote = f"{shlex.quote(cfg['venv_python'])} - <<'PY'\n{code}\nPY"
+    cp = ssh(cfg["host"], remote, timeout=timeout)
+    if cp.returncode != 0:
+        raise RuntimeError(
+            f"Globus Compute remote command failed rc={cp.returncode}: "
+            f"stdout={cp.stdout[-2000:]!r} stderr={cp.stderr[-2000:]!r}"
+        )
+    try:
+        return json.loads(cp.stdout.strip().splitlines()[-1])
+    except Exception as e:
+        raise RuntimeError(f"Could not parse Globus Compute JSON output: {e}; stdout={cp.stdout[-4000:]!r}") from e
+
+
+def globus_compute_status(cluster: str, body: dict[str, Any]) -> dict[str, Any]:
+    cfg = GLOBUS_COMPUTE_ENDPOINTS[cluster]
+    endpoint_id = cfg["endpoint_id"]
+    code = f'''
+import json
+from globus_compute_sdk import Client
+endpoint_id = {endpoint_id!r}
+cluster = {cluster!r}
+client = Client()
+out = {{"status": "ok", "transport": "globus_compute", "cluster": cluster, "endpoint_id": endpoint_id}}
+try:
+    out["endpoint_status"] = client.get_endpoint_status(endpoint_id)
+except Exception as e:
+    out["endpoint_status_error"] = "%s: %s" % (type(e).__name__, e)
+try:
+    out["endpoint_metadata"] = client.get_endpoint_metadata(endpoint_id)
+except Exception as e:
+    out["endpoint_metadata_error"] = "%s: %s" % (type(e).__name__, e)
+print(json.dumps(out, default=str, sort_keys=True))
+'''
+    out = globus_compute_remote(cluster, code)
+    out.setdefault("description", cfg.get("description"))
+    return out
+
+
+def globus_compute_plan(req_id: str, cluster: str, body: dict[str, Any]) -> dict[str, Any]:
+    cfg = GLOBUS_COMPUTE_ENDPOINTS[cluster]
+    return {
+        "status": "planned",
+        "transport": "globus_compute",
+        "cluster": cluster,
+        "endpoint_id": cfg["endpoint_id"],
+        "endpoint_host": cfg["host"],
+        "action": str(body.get("action") or "dry_run"),
+        "note": "Globus Compute plan only; no function submitted",
+        "supported_actions": ["dry_run", "status", "submit_smoke"],
+    }
+
+
+def globus_compute_submit_smoke(req_id: str, cluster: str, body: dict[str, Any]) -> dict[str, Any]:
+    cfg = GLOBUS_COMPUTE_ENDPOINTS[cluster]
+    endpoint_id = cfg["endpoint_id"]
+    timeout = int(body.get("timeout_seconds") or 60)
+    if timeout < 5 or timeout > 300:
+        raise ValueError("timeout_seconds must be between 5 and 300")
+    code = f'''
+import json
+from globus_compute_sdk import Executor
+endpoint_id = {endpoint_id!r}
+request_id = {req_id!r}
+cluster = {cluster!r}
+
+def sibline_globus_compute_smoke(cluster=cluster, request_id=request_id):
+    import os, socket, sys, time
+    return {{
+        "GLOBUS_COMPUTE_SMOKE_OK": 1,
+        "cluster": cluster,
+        "request_id": request_id,
+        "host": socket.gethostname(),
+        "user": os.getenv("USER"),
+        "pid": os.getpid(),
+        "python": sys.version.split()[0],
+        "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }}
+
+with Executor(endpoint_id=endpoint_id) as ex:
+    fut = ex.submit(sibline_globus_compute_smoke)
+    result = fut.result(timeout={timeout})
+    task_id = getattr(fut, "task_id", None)
+print(json.dumps({{"status": "completed", "transport": "globus_compute", "cluster": cluster, "endpoint_id": endpoint_id, "task_id": str(task_id) if task_id else None, "result": result}}, sort_keys=True))
+'''
+    return globus_compute_remote(cluster, code, timeout=timeout + 45)
+
+
 def reply(req_id: str, body: dict[str, Any], dry_run: bool = False) -> None:
     envelope = {"request_id": req_id, "broker": "ollie-cherryrd", "ts": now_iso(), **body}
     if dry_run:
@@ -354,6 +462,8 @@ def handle(req_id: str, rec: dict[str, Any], body: dict[str, Any], *, dry_run: b
         raise ValueError(f"unsafe request_id: {req_id!r}")
     action, cluster, queue, alloc, transport = validate_common(body)
     if action == "dry_run":
+        if transport == "globus_compute":
+            return globus_compute_plan(req_id, cluster, body)
         if transport == "iri":
             return iri_plan(req_id, cluster, queue, alloc, body)
         ok, bal_text, balance = allocation_balance(cluster, alloc)
@@ -370,6 +480,10 @@ def handle(req_id: str, rec: dict[str, Any], body: dict[str, Any], *, dry_run: b
             "sbank_evidence": bal_text[-2000:],
         }
     if action == "submit_smoke":
+        if transport == "globus_compute":
+            if dry_run:
+                return globus_compute_plan(req_id, cluster, body)
+            return globus_compute_submit_smoke(req_id, cluster, body)
         if transport == "iri":
             if dry_run:
                 return iri_plan(req_id, cluster, queue, alloc, body)
@@ -378,6 +492,8 @@ def handle(req_id: str, rec: dict[str, Any], body: dict[str, Any], *, dry_run: b
             return plan_smoke(req_id, cluster, queue, alloc, body)
         return submit_smoke(req_id, cluster, queue, alloc, body)
     if action == "status":
+        if transport == "globus_compute":
+            return globus_compute_status(cluster, body)
         if transport == "iri":
             return iri_status_job(cluster, body)
         return status_job(cluster, body)

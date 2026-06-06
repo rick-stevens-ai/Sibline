@@ -42,6 +42,23 @@ ALCF docs currently list compute submission support for Polaris and Crux. Aurora
 is visible in resource status but gated as unsupported for IRI submit until ALCF
 docs or a live authenticated probe says otherwise.
 
+### `transport: "globus_compute"`
+
+Uses an allowlisted Globus Compute endpoint as a remote Python/function execution
+fabric. This is not a general shell path and does not transfer credentials to the
+peer. Current allowlist:
+
+- `cluster: "nuc13"` → endpoint `4cf42bb1-0415-427a-b30c-c4660af2a33b`, name `nuc13`
+
+Current validated scope:
+
+- `dry_run` — return endpoint plan/metadata
+- `status` — query endpoint status/metadata via the SDK
+- `submit_smoke` — submit a tiny built-in Python function and return its result
+
+This is the right path for reusable Python functions/workflows on known endpoints,
+not for software builds or arbitrary shell execution.
+
 ## Request envelope
 
 Publish to `sibline.ollie.inbox`:
@@ -72,8 +89,9 @@ body containing `status`, `transport`, `cluster`, and any job/task identifiers.
 
 - No arbitrary shell from the peer.
 - No raw PBS script execution in the current default path.
-- Allocations, queues, clusters, and paths are allowlisted.
+- Allocations, queues, clusters, endpoints, and paths are allowlisted.
 - IRI output fetch is restricted to `/home/stevens/iri-hpc-broker/`.
+- Globus Compute requests are restricted to built-in broker functions on known endpoint IDs.
 - Every request/result is written to `~/.openclaw/workspace/memory/hpc-broker/jobs/`.
 
 ## Auth

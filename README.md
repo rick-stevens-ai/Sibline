@@ -89,8 +89,9 @@ The Ollie/OpenClaw client includes a controlled HPC broker that accepts
 `kind=hpc.request` over Sibline and replies with `kind=hpc.response`. It supports
 CherryRd SSH/PBS submissions for Polaris/Aurora and ALCF IRI API submissions for
 Polaris/Crux where supported. See
-[`clients/ollie-openclaw/hpc/README.md`](clients/ollie-openclaw/hpc/README.md)
-and [`docs/iri-hpc-broker.md`](docs/iri-hpc-broker.md).
+[`clients/ollie-openclaw/hpc/README.md`](clients/ollie-openclaw/hpc/README.md),
+[`docs/iri-hpc-broker.md`](docs/iri-hpc-broker.md), and
+[`docs/globus-compute-broker.md`](docs/globus-compute-broker.md).
 
 ## Layout
 

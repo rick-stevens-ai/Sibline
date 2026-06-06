@@ -175,8 +175,8 @@ Common fields:
 {
   "request_id": "unique id for audit/reply correlation",
   "action": "dry_run | submit_smoke | status | fetch_output",
-  "transport": "ssh | iri",
-  "cluster": "polaris | aurora | crux",
+  "transport": "ssh | iri | globus_compute",
+  "cluster": "polaris | aurora | crux | nuc13",
   "allocation": "project/account name",
   "queue": "debug",
   "walltime": "00:05:00"
@@ -190,6 +190,11 @@ Transport rules in the reference implementation:
 - `iri`: uses the ALCF Facility API; currently validated for Polaris and Crux
   planning, and Polaris real submit/status/output. Aurora is visible in ALCF
   resource status but gated until IRI submit support is documented/proven.
+- `globus_compute`: uses allowlisted Globus Compute endpoint IDs for built-in
+  Python/function actions. Initial reference endpoint is `cluster=nuc13`,
+  endpoint `4cf42bb1-0415-427a-b30c-c4660af2a33b`. Current actions are
+  `dry_run`, `status`, and `submit_smoke`; no arbitrary user function or shell
+  body is accepted over Sibline.
 
 ### `kind=hpc.response`
 
@@ -201,8 +206,8 @@ Published by Ollie to `sibline.kukla.inbox`. The `body` MUST include:
   "broker": "ollie-cherryrd",
   "ts": "ISO 8601 UTC",
   "status": "planned | submitted | completed | unsupported | rejected | ...",
-  "transport": "ssh | iri",
-  "cluster": "polaris | aurora | crux"
+  "transport": "ssh | iri | globus_compute",
+  "cluster": "polaris | aurora | crux | nuc13"
 }
 ```
 
