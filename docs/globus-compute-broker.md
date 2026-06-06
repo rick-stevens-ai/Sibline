@@ -1,6 +1,6 @@
 # Globus Compute HPC broker path
 
-Status: implemented for `nuc13` and the PBS-backed `polaris` endpoint.
+Status: implemented for `nuc13`, the PBS-backed `polaris` endpoint, and the PBS-backed `aurora` endpoint.
 
 ## Purpose
 
@@ -19,6 +19,7 @@ sharing mechanism. The peer can request only broker-defined actions.
 |---|---|---|---|
 | `nuc13` | `nuc13` | `4cf42bb1-0415-427a-b30c-c4660af2a33b` | `stevens-NUC13RNGi9` |
 | `polaris` | `polaris` | `b624baaa-d390-4b7b-b878-1a1c5afc7f2f` | `polaris-login-04` / PBS workers (`4× A100`) |
+| `aurora` | `aurora` | `5f931d91-04e9-4b19-ad59-c3923f3a1460` | `aurora-uan-0009` / PBS workers (Intel Max GPUs) |
 
 Nuc13's endpoint runs from:
 
@@ -99,3 +100,14 @@ python: 3.13.13
 - Worker config requests PBS `debug`, allocation `IMPROVE_Aim1`, `select=1:ncpus=64:ngpus=4`, `filesystems=home:eagle`, `walltime=00:10:00`.
 - Verified smoke on 2026-06-06: task `2b2a0bbf-b4d8-4f52-ad85-b189083f9fbe` ran on `x3001c0s13b0n0` and saw four `NVIDIA A100-SXM4-40GB` GPUs.
 - Client-side Python should match endpoint Python 3.11 when submitting arbitrary serialized functions; Python 3.13 clients can hit dill/serialization failures.
+
+
+## Aurora notes
+
+- Endpoint: `ollie-aurora` (`5f931d91-04e9-4b19-ad59-c3923f3a1460`).
+- Runs from `/lus/flare/projects/AuroraGPT/stevens/globus-compute-aurora`.
+- Manager config dir moved to `/lus/flare/projects/AuroraGPT/stevens/globus-compute-aurora/gc-config`.
+- User endpoint runtime dir set via `GLOBUS_COMPUTE_USER_DIR=/lus/flare/projects/AuroraGPT/stevens/globus-compute-aurora/gc-user` to avoid Aurora home quota failures.
+- Uses frameworks Python `3.12.12` and Globus Compute 4.9.0.
+- Worker config requests PBS `debug`, allocation `AuroraGPT`, `select=1:ncpus=208:ngpus=1`, `filesystems=home:flare`, `walltime=00:10:00`.
+- As of 2026-06-06, endpoint manager is online and smoke task reached the user endpoint/PBS queue (`8528712` queued); final worker completion may depend on Aurora debug queue availability.

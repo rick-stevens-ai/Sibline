@@ -76,6 +76,17 @@ DEFAULT_QUEUE = {
 }
 
 GLOBUS_COMPUTE_ENDPOINTS = {
+    "aurora": {
+        "endpoint_id": "5f931d91-04e9-4b19-ad59-c3923f3a1460",
+        "host": "aurora",
+        "venv_python": "/lus/flare/projects/AuroraGPT/stevens/globus-compute-aurora/venv/bin/python",
+        "description": "PBS-backed Globus Compute endpoint on Aurora using AuroraGPT/debug and Intel Max GPU nodes",
+        "config_dir": "/lus/flare/projects/AuroraGPT/stevens/globus-compute-aurora/gc-config",
+        "user_compute_dir": "/lus/flare/projects/AuroraGPT/stevens/globus-compute-aurora/gc-user",
+        "user_endpoint_config": {
+            "worker_init": "cd /lus/flare/projects/AuroraGPT/stevens/globus-compute-aurora\nsource /lus/flare/projects/AuroraGPT/stevens/globus-compute-aurora/venv/bin/activate\nexport TMPDIR=/tmp\nexport GLOBUS_COMPUTE_USER_DIR=/lus/flare/projects/AuroraGPT/stevens/globus-compute-aurora/gc-user\n"
+        },
+    },
     "polaris": {
         "endpoint_id": "b624baaa-d390-4b7b-b878-1a1c5afc7f2f",
         "host": "polaris",
