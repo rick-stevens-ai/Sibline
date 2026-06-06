@@ -1,6 +1,6 @@
 # Globus Compute HPC broker path
 
-Status: implemented for `nuc13`, the PBS-backed `polaris` endpoint, and the PBS-backed `aurora` endpoint.
+Status: implemented for `nuc13`, `crux`, and the PBS-backed `polaris`/`aurora` endpoints.
 
 ## Purpose
 
@@ -20,6 +20,7 @@ sharing mechanism. The peer can request only broker-defined actions.
 | `nuc13` | `nuc13` | `4cf42bb1-0415-427a-b30c-c4660af2a33b` | `stevens-NUC13RNGi9` |
 | `polaris` | `polaris` | `b624baaa-d390-4b7b-b878-1a1c5afc7f2f` | `polaris-login-04` / PBS workers (`4× A100`) |
 | `aurora` | `aurora` | `5f931d91-04e9-4b19-ad59-c3923f3a1460` | `aurora-uan-0009` / PBS workers (Intel Max GPUs) |
+| `crux` | `crux` | `1a30477c-7c30-421e-b688-5f36c8a86cbe` | `crux-uan-0001` LocalProvider |
 
 Nuc13's endpoint runs from:
 
@@ -110,4 +111,15 @@ python: 3.13.13
 - User endpoint runtime dir set via `GLOBUS_COMPUTE_USER_DIR=/lus/flare/projects/AuroraGPT/stevens/globus-compute-aurora/gc-user` to avoid Aurora home quota failures.
 - Uses frameworks Python `3.12.12` and Globus Compute 4.9.0.
 - Worker config requests PBS `debug`, allocation `AuroraGPT`, `select=1:ncpus=208:ngpus=1`, `filesystems=home:flare`, `walltime=00:10:00`.
-- As of 2026-06-06, endpoint manager is online and smoke task reached the user endpoint/PBS queue (`8528712` queued); final worker completion may depend on Aurora debug queue availability.
+- Verified smoke on 2026-06-06: ran on Aurora node `x4219c2s3b0n0`, Python `3.12.12`, and saw `/dev/dri` cards/render devices for Intel GPUs.
+
+
+## Crux notes
+
+- Endpoint: `ollie-crux` (`1a30477c-7c30-421e-b688-5f36c8a86cbe`).
+- Runs from `/lus/eagle/projects/IMPROVE_Aim1/stevens/globus-compute-crux`.
+- Uses Cray Python `3.11.7` and Globus Compute 4.9.0.
+- LocalProvider endpoint on `crux-uan-0001` (`max_workers_per_node: 2`).
+- Requires an interactive SSH ControlMaster to `crux` because the host offers keyboard-interactive/hostbased auth, not normal batch public-key auth.
+- Verified smoke on 2026-06-06: task ran on `crux-uan-0001`, Python `3.11.7`.
+- Tailscale is not installed; noninteractive `sudo -n true` fails, so Tailscale installation requires an interactive sudo/admin path or a site-supported install method.

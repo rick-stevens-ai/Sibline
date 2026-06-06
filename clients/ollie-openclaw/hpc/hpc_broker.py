@@ -76,6 +76,12 @@ DEFAULT_QUEUE = {
 }
 
 GLOBUS_COMPUTE_ENDPOINTS = {
+    "crux": {
+        "endpoint_id": "1a30477c-7c30-421e-b688-5f36c8a86cbe",
+        "host": "crux",
+        "venv_python": "/lus/eagle/projects/IMPROVE_Aim1/stevens/globus-compute-crux/venv/bin/python",
+        "description": "LocalProvider Globus Compute endpoint on Crux login host",
+    },
     "aurora": {
         "endpoint_id": "5f931d91-04e9-4b19-ad59-c3923f3a1460",
         "host": "aurora",
