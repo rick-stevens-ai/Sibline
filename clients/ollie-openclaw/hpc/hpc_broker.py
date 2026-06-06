@@ -76,6 +76,15 @@ DEFAULT_QUEUE = {
 }
 
 GLOBUS_COMPUTE_ENDPOINTS = {
+    "polaris": {
+        "endpoint_id": "b624baaa-d390-4b7b-b878-1a1c5afc7f2f",
+        "host": "polaris",
+        "venv_python": "/lus/eagle/projects/IMPROVE_Aim1/stevens/globus-compute-polaris/venv/bin/python",
+        "description": "PBS-backed Globus Compute endpoint on Polaris using IMPROVE_Aim1/debug and 4x A100 per block",
+        "user_endpoint_config": {
+            "worker_init": "cd /lus/eagle/projects/IMPROVE_Aim1/stevens/globus-compute-polaris\nsource /lus/eagle/projects/IMPROVE_Aim1/stevens/globus-compute-polaris/venv/bin/activate\nexport TMPDIR=/tmp\n"
+        },
+    },
     "nuc13": {
         "endpoint_id": "4cf42bb1-0415-427a-b30c-c4660af2a33b",
         "host": "nuc13",
@@ -415,15 +424,17 @@ def globus_compute_plan(req_id: str, cluster: str, body: dict[str, Any]) -> dict
 def globus_compute_submit_smoke(req_id: str, cluster: str, body: dict[str, Any]) -> dict[str, Any]:
     cfg = GLOBUS_COMPUTE_ENDPOINTS[cluster]
     endpoint_id = cfg["endpoint_id"]
+    user_endpoint_config = cfg.get("user_endpoint_config")
     timeout = int(body.get("timeout_seconds") or 60)
     if timeout < 5 or timeout > 300:
         raise ValueError("timeout_seconds must be between 5 and 300")
     code = f'''
 import json
-from globus_compute_sdk import Executor
+from globus_compute_sdk import Client, Executor
 endpoint_id = {endpoint_id!r}
 request_id = {req_id!r}
 cluster = {cluster!r}
+user_endpoint_config = {user_endpoint_config!r}
 
 def sibline_globus_compute_smoke(cluster=cluster, request_id=request_id):
     import os, socket, sys, time
@@ -438,7 +449,10 @@ def sibline_globus_compute_smoke(cluster=cluster, request_id=request_id):
         "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }}
 
-with Executor(endpoint_id=endpoint_id) as ex:
+executor_kwargs = {{"endpoint_id": endpoint_id}}
+if user_endpoint_config:
+    executor_kwargs["user_endpoint_config"] = user_endpoint_config
+with Executor(**executor_kwargs) as ex:
     fut = ex.submit(sibline_globus_compute_smoke)
     result = fut.result(timeout={timeout})
     task_id = getattr(fut, "task_id", None)

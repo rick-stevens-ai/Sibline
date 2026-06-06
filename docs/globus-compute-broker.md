@@ -1,6 +1,6 @@
 # Globus Compute HPC broker path
 
-Status: implemented for the initial `nuc13` endpoint.
+Status: implemented for `nuc13` and the PBS-backed `polaris` endpoint.
 
 ## Purpose
 
@@ -18,6 +18,7 @@ sharing mechanism. The peer can request only broker-defined actions.
 | Cluster label | Endpoint name | Endpoint ID | Host |
 |---|---|---|---|
 | `nuc13` | `nuc13` | `4cf42bb1-0415-427a-b30c-c4660af2a33b` | `stevens-NUC13RNGi9` |
+| `polaris` | `polaris` | `b624baaa-d390-4b7b-b878-1a1c5afc7f2f` | `polaris-login-04` / PBS workers (`4× A100`) |
 
 Nuc13's endpoint runs from:
 
@@ -88,3 +89,13 @@ host: stevens-NUC13RNGi9
 user: stevens
 python: 3.13.13
 ```
+
+
+## Polaris notes
+
+- Endpoint: `ollie-polaris` (`b624baaa-d390-4b7b-b878-1a1c5afc7f2f`).
+- Runs from `/lus/eagle/projects/IMPROVE_Aim1/stevens/globus-compute-polaris`.
+- Uses Cray Python 3.11.7 and Globus Compute 4.9.0.
+- Worker config requests PBS `debug`, allocation `IMPROVE_Aim1`, `select=1:ncpus=64:ngpus=4`, `filesystems=home:eagle`, `walltime=00:10:00`.
+- Verified smoke on 2026-06-06: task `2b2a0bbf-b4d8-4f52-ad85-b189083f9fbe` ran on `x3001c0s13b0n0` and saw four `NVIDIA A100-SXM4-40GB` GPUs.
+- Client-side Python should match endpoint Python 3.11 when submitting arbitrary serialized functions; Python 3.13 clients can hit dill/serialization failures.
