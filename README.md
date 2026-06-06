@@ -83,6 +83,15 @@ Then install as a service. See
 python3 scripts/smoke.py
 ```
 
+### HPC broker path
+
+The Ollie/OpenClaw client includes a controlled HPC broker that accepts
+`kind=hpc.request` over Sibline and replies with `kind=hpc.response`. It supports
+CherryRd SSH/PBS submissions for Polaris/Aurora and ALCF IRI API submissions for
+Polaris/Crux where supported. See
+[`clients/ollie-openclaw/hpc/README.md`](clients/ollie-openclaw/hpc/README.md)
+and [`docs/iri-hpc-broker.md`](docs/iri-hpc-broker.md).
+
 ## Layout
 
 ```
@@ -96,14 +105,15 @@ sibline/
 │   └── systemd.…service      ← Linux service unit
 ├── clients/
 │   ├── kukla-hermes/         ← Hermes-side Python subscriber (canonical reference)
-│   └── ollie-openclaw/       ← OpenClaw-side subscriber (Ollie's stack)
+│   └── ollie-openclaw/       ← OpenClaw-side subscriber + optional HPC broker
 ├── spec/
 │   └── sibline-v1.md         ← wire protocol — required behaviors, envelope, ACLs
 ├── scripts/
 │   ├── smoke.py              ← end-to-end pub/sub test against your broker
 │   └── verify-symmetry.sh    ← prove both directions work
 └── docs/
-    └── rationale.md          ← why Sibline; what we didn't build
+    ├── rationale.md              ← why Sibline; what we didn't build
+    └── iri-hpc-broker.md          ← ALCF IRI HPC broker path
 ```
 
 ## What this isn't

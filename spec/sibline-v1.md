@@ -60,7 +60,7 @@ Every Sibline message body is a single JSON object:
   "from":      "kukla | ollie",
   "to":        "kukla | ollie | all",
   "ts":        "ISO 8601 UTC, e.g. 2026-06-05T14:07:00Z",
-  "kind":      "direct | broadcast | ping | pong | smoke | smoke_ack | status | heartbeat | loop_close",
+  "kind":      "direct | broadcast | ping | pong | smoke | smoke_ack | status | heartbeat | loop_close | hpc.request | hpc.response",
   "body":      "string OR object — the payload",
   "reply_to":  "(optional) id of the message this replies to"
 }
@@ -71,6 +71,8 @@ Every Sibline message body is a single JSON object:
   `<agent>-<purpose>-<epoch_seconds>` or `<agent>-<purpose>-<uuid4_hex_12>`.
 - `kind` is what receivers inspect to decide whether to surface, ignore, or
   auto-respond. Unknown kinds MUST be logged but not acted on.
+- Dotted kinds (for example `hpc.request`) are allowed for domain-specific
+  request/response protocols layered on Sibline.
 - `body` is free-form. If `body` is an object, downstream user-surface
   bridges should JSON-encode it before display.
 - `reply_to` lets receivers thread responses without parsing `body`.
@@ -151,7 +153,66 @@ expected identity SHOULD log it as suspicious.
 (Future v2 may add per-agent publish ACLs if impersonation becomes a real
 problem.)
 
-## 8. Out of scope for v1
+## 8. Domain-specific request/response: HPC broker
+
+Sibline itself is transport, not an execution authority. Domain-specific
+protocols MAY be layered on top using dotted `kind` names. The first reference
+protocol is Ollie's controlled HPC broker for Kukla.
+
+### `kind=hpc.request`
+
+Published by Kukla to `sibline.ollie.inbox`. The `body` MUST be an object.
+Current actions are intentionally allowlisted:
+
+- `dry_run` — validate/plan only
+- `submit_smoke` — submit a tiny built-in smoke job
+- `status` — query job status
+- `fetch_output` — retrieve IRI-managed smoke output
+
+Common fields:
+
+```json
+{
+  "request_id": "unique id for audit/reply correlation",
+  "action": "dry_run | submit_smoke | status | fetch_output",
+  "transport": "ssh | iri",
+  "cluster": "polaris | aurora | crux",
+  "allocation": "project/account name",
+  "queue": "debug",
+  "walltime": "00:05:00"
+}
+```
+
+Transport rules in the reference implementation:
+
+- `ssh`: uses Ollie/CherryRd SSH ControlMaster sockets; currently Polaris and
+  Aurora.
+- `iri`: uses the ALCF Facility API; currently validated for Polaris and Crux
+  planning, and Polaris real submit/status/output. Aurora is visible in ALCF
+  resource status but gated until IRI submit support is documented/proven.
+
+### `kind=hpc.response`
+
+Published by Ollie to `sibline.kukla.inbox`. The `body` MUST include:
+
+```json
+{
+  "request_id": "same id as request",
+  "broker": "ollie-cherryrd",
+  "ts": "ISO 8601 UTC",
+  "status": "planned | submitted | completed | unsupported | rejected | ...",
+  "transport": "ssh | iri",
+  "cluster": "polaris | aurora | crux"
+}
+```
+
+Implementations MUST keep this protocol constrained: no raw shell, no arbitrary
+script execution, no credential transfer to the peer, and auditable request/result
+records.
+
+---
+
+## 9. Out of scope for v1
 
 - TLS / mTLS (add when broker leaves the tailnet)
 - Multi-broker / cluster (single broker is fine for two agents)
@@ -160,7 +221,7 @@ problem.)
 - End-to-end encryption (rely on transport layer for now)
 - Cross-version envelope migration (no v0 in the wild)
 
-## 9. Versioning
+## 10. Versioning
 
 This is **v1**. Breaking changes (new required fields, removed kinds,
 incompatible subject moves) bump to v2 with a parallel-run period.
