@@ -64,7 +64,15 @@ BROADCAST_DURABLE = os.environ.get("SIBLINE_BROADCAST_DURABLE", f"{AGENT}-bcast-
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 DAEMON_LOG = LOG_DIR / "sibline-subscriber.log"
-NATS_ONLY_KINDS = {"smoke", "smoke_ack", "status", "heartbeat", "ping", "pong"}
+NATS_ONLY_KINDS = {"smoke", "smoke_ack", "status", "heartbeat", "ping", "pong", "rr_probe"}
+
+# 5-agent mesh allowlist (elders + trickster trio). Only these are valid
+# pong requesters/targets for reachability probes.
+AGENT_NAMES = {"ollie", "kukla", "ikto", "tsisdu", "yeil"}
+
+# Reachability-probe kinds that trigger an auto-pong. 'ping' = elder standard,
+# 'rr_probe' = trickster round-robin vocabulary. Both must be answered.
+PING_KINDS = {"ping", "rr_probe"}
 
 
 # ----- nats-py timestamp compatibility -----
@@ -130,8 +138,10 @@ async def handle_js(msg, nc) -> None:
 
     # Sibline v1 requires ACK after local log write. If mailbox bridging fails
     # below, we leave the message unacked so JetStream can redeliver.
-    if kind == "ping":
+    if kind in PING_KINDS:
         requester = str(payload.get("from") or PEER).strip().lower()
+        if requester not in AGENT_NAMES:
+            requester = PEER
         direct_subject = f"sibline.{requester}.inbox"
         pong_obj = {
             "id": f"{AGENT}-pong-{uuid.uuid4().hex[:12]}",
