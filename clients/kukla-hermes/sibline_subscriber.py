@@ -83,7 +83,12 @@ INBOX_DURABLE = f"{AGENT}-inbox-consumer-v2"
 BROADCAST_SUBJECT = "sibline.broadcast"
 BROADCAST_DURABLE = f"{AGENT}-broadcast-consumer-v1"
 
-NOISE_KINDS = {"smoke", "smoke_ack", "status", "heartbeat", "ping", "pong"}
+# Liveness/probe traffic is kept NATS-only (never bridged to the local mailbox).
+NOISE_KINDS = {"smoke", "smoke_ack", "status", "heartbeat", "ping", "pong", "rr_probe"}
+# Recognized agents in the 5-agent mesh: elders (ollie, kukla) + trickster trio.
+AGENT_NAMES = {"ollie", "kukla", "ikto", "tsisdu", "yeil"}
+# Envelope kinds that trigger an auto-pong liveness reply.
+PING_KINDS = {"ping", "rr_probe"}
 NOISE_SUFFIXES = (".smoke", ".status", ".ping", ".pong", ".heartbeat")
 
 
@@ -173,28 +178,31 @@ async def main() -> None:
             # is a local surface convenience, not part of broker delivery semantics.
             await msg.ack()
 
-            # Auto-pong: incoming ping → pong reply to requester inbox (+ outbox audit).
+            # Auto-pong: incoming ping/rr_probe from a known mesh agent → pong
+            # reply to requester inbox (+ outbox audit). Symmetric liveness across
+            # the 5-agent mesh (elders + trickster trio).
             try:
                 env = json.loads(body)
             except (ValueError, TypeError):
                 env = {}
-            if isinstance(env, dict) and env.get("kind") == "ping":
+            if isinstance(env, dict) and env.get("kind") in PING_KINDS:
                 requester = str(env.get("from") or PEER).strip().lower()
-                pong = {
-                    "id": f"{AGENT}-pong-{uuid.uuid4().hex[:12]}",
-                    "from": AGENT,
-                    "to": requester,
-                    "ts": ts,
-                    "reply_to": env.get("id"),
-                    "kind": "pong",
-                    "body": {"req_id": env.get("id"), "req_ts": env.get("ts", "")},
-                }
-                data = json.dumps(pong, separators=(",", ":")).encode()
-                direct = f"sibline.{requester}.inbox"
-                await nc.publish(direct, data)
-                await nc.publish(f"sibline.{AGENT}.outbox", data)
-                log(f"auto-pong -> {direct} + sibline.{AGENT}.outbox req_id={env.get('id')}")
-                return
+                if requester in AGENT_NAMES:
+                    pong = {
+                        "id": f"{AGENT}-pong-{uuid.uuid4().hex[:12]}",
+                        "from": AGENT,
+                        "to": requester,
+                        "ts": ts,
+                        "reply_to": env.get("id"),
+                        "kind": "pong",
+                        "body": {"req_id": env.get("id"), "req_ts": env.get("ts", "")},
+                    }
+                    data = json.dumps(pong, separators=(",", ":")).encode()
+                    direct = f"sibline.{requester}.inbox"
+                    await nc.publish(direct, data)
+                    await nc.publish(f"sibline.{AGENT}.outbox", data)
+                    log(f"auto-pong -> {direct} + sibline.{AGENT}.outbox req_id={env.get('id')}")
+                    return
 
             bridge_to_mailbox(ts, msg.subject, body, source)
         return on_msg

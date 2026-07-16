@@ -41,7 +41,8 @@ All Sibline traffic lives under `sibline.>`. Three families:
 | `sibline.presence.<agent>` | lightweight status | ephemeral | on-demand query |
 
 ### Naming rules
-- `<agent>` is a lowercase short identifier (`kukla`, `ollie`).
+- `<agent>` is a lowercase short identifier drawn from the recognized mesh
+  roster: elders `kukla`, `ollie`; trickster trio `ikto`, `tsisdu`, `yeil`.
 - Reserved suffixes that indicate *noise* (no user-surface bridging):
   `.smoke`, `.status`, `.ping`, `.pong`, `.heartbeat`.
 
@@ -57,10 +58,10 @@ Every Sibline message body is a single JSON object:
 ```json
 {
   "id":        "string, globally unique (uuid hex or <agent>-<purpose>-<epoch>)",
-  "from":      "kukla | ollie",
-  "to":        "kukla | ollie | all",
+  "from":      "kukla | ollie | ikto | tsisdu | yeil",
+  "to":        "kukla | ollie | ikto | tsisdu | yeil | all",
   "ts":        "ISO 8601 UTC, e.g. 2026-06-05T14:07:00Z",
-  "kind":      "direct | broadcast | ping | pong | smoke | smoke_ack | status | heartbeat | loop_close | hpc.request | hpc.response",
+  "kind":      "direct | broadcast | ping | pong | rr_probe | smoke | smoke_ack | status | heartbeat | loop_close | hpc.request | hpc.response",
   "body":      "string OR object — the payload",
   "reply_to":  "(optional) id of the message this replies to"
 }
@@ -115,13 +116,16 @@ Every Sibline participant MUST:
    with durable JetStream consumers.
 2. **Log** every received message to local JSONL (timestamp, subject, raw
    body, headers) before acking.
-3. **Auto-pong** — on receipt of `kind=ping`, publish a `kind=pong` envelope
-   to `sibline.<requester>.inbox` referencing the original `id` via
-   `reply_to`, and an audit copy to `sibline.<self>.outbox`. No human-facing
-   surface should be touched for ping/pong.
+3. **Auto-pong** — on receipt of `kind=ping` *or* `kind=rr_probe` from a
+   recognized roster agent, publish a `kind=pong` envelope to
+   `sibline.<requester>.inbox` referencing the original `id` via `reply_to`
+   (echoing `req_id`/`req_ts` in the body), and an audit copy to
+   `sibline.<self>.outbox`. No human-facing surface should be touched for
+   ping/pong/rr_probe. `rr_probe` is the round-robin reachability probe used
+   for the 5/5 mesh liveness sweep (20/20 legs).
 4. **Suppress noise from user-surfaces** — when bridging into a user-visible
    channel (Telegram, Slack, mailbox cron), skip envelopes whose `kind` is
-   in `{smoke, smoke_ack, status, heartbeat, ping, pong}` and subjects
+   in `{smoke, smoke_ack, status, heartbeat, ping, pong, rr_probe}` and subjects
    ending in any reserved noise suffix.
 
 Every Sibline participant SHOULD:
