@@ -38,6 +38,7 @@ import datetime as _dt
 import json
 import os
 import re as _re
+import shlex as _shlex
 import signal
 import sys
 import time
@@ -97,6 +98,21 @@ AGENT_NAMES = {
 PING_KINDS = {"ping", "rr_probe"}
 NOISE_SUFFIXES = (".smoke", ".status", ".ping", ".pong", ".heartbeat")
 
+# ----- task worker (delegated-work RPC) -----
+# When another agent publishes a kind=task_request envelope, this daemon can run
+# the task via a local worker command and publish the lifecycle back
+# (task_accepted -> task_progress... -> task_result/task_error), per
+# spec/sibline-task-rpc-v1.md. Opt-in: set SIBLINE_WORKER_CMD to enable.
+#   SIBLINE_WORKER_CMD   e.g. "hermes --yolo -z {prompt}"  ({prompt} is shell-safe-substituted)
+#   SIBLINE_WORKER_TIMEOUT  seconds (default 300)
+#   SIBLINE_WORKER_SHELL    if "1", run WORKER_CMD via a login shell (for PATH/env). default 1.
+TASK_KINDS = {"task_request"}
+WORKER_CMD = os.environ.get("SIBLINE_WORKER_CMD", "").strip()
+WORKER_TIMEOUT = float(os.environ.get("SIBLINE_WORKER_TIMEOUT", "300"))
+WORKER_SHELL = os.environ.get("SIBLINE_WORKER_SHELL", "1").strip() == "1"
+# Dedupe: remember req_ids we've already started so a redelivery doesn't double-run.
+_SEEN_TASKS: set = set()
+
 
 def load_password() -> str:
     if not CREDS_FILE.exists():
@@ -150,6 +166,110 @@ def bridge_to_mailbox(ts: str, subject: str, body: str, source: str) -> None:
         log(f"bridged -> mailbox (id={mail_entry['id']}, src={source})")
     except Exception as e:
         log(f"mailbox bridge failed: {e}")
+
+
+async def run_task_worker(nc, env: dict, source: str) -> None:
+    """Run a delegated task via the local worker command and publish the
+    task-RPC lifecycle back to the requester, per spec/sibline-task-rpc-v1.md.
+
+    Lifecycle: task_accepted -> task_progress (heartbeats) -> task_result|task_error.
+    """
+    req_id = str(env.get("req_id") or env.get("id") or "")
+    requester = str(env.get("from") or PEER).strip().lower()
+    body = env.get("body")
+    if isinstance(body, dict):
+        task_text = str(body.get("task") or body.get("prompt") or "")
+        deadline_s = float(body.get("deadline_s") or WORKER_TIMEOUT)
+    else:
+        task_text = str(body or "")
+        deadline_s = WORKER_TIMEOUT
+    if not req_id or not task_text:
+        log(f"task_request ignored (missing req_id/task) from={requester}")
+        return
+    if requester not in AGENT_NAMES:
+        log(f"task_request from unknown agent '{requester}' rejected")
+        return
+    if req_id in _SEEN_TASKS:
+        log(f"task_request {req_id} already seen; skipping redelivery")
+        return
+    _SEEN_TASKS.add(req_id)
+
+    reply_subj = f"sibline.{requester}.inbox"
+
+    def _now() -> str:
+        return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    async def _emit(kind: str, body_obj) -> None:
+        envlp = {
+            "id": f"{AGENT}-{kind}-{uuid.uuid4().hex[:10]}",
+            "from": AGENT, "to": requester, "ts": _now(),
+            "reply_to": env.get("id"), "req_id": req_id,
+            "kind": kind, "body": body_obj,
+        }
+        await nc.publish(reply_subj, json.dumps(envlp, separators=(",", ":")).encode())
+        await nc.flush()
+
+    if not WORKER_CMD:
+        await _emit("task_error", {"error": "no_worker", "detail": f"{AGENT} has no SIBLINE_WORKER_CMD configured"})
+        log(f"task {req_id}: no worker configured -> task_error")
+        return
+
+    await _emit("task_accepted", {"worker": AGENT, "deadline_s": deadline_s})
+    log(f"task {req_id} ACCEPTED from={requester}: {task_text[:80]!r}")
+
+    # Build the prompt: the task + an instruction NOT to try to reply over sibline
+    # (the daemon handles the reply); just produce the answer as final text.
+    prompt = (
+        task_text
+        + "\n\n---\nYou are completing a delegated task. Do the work using your tools as needed, "
+          "then end your reply with the final answer/result as plain text. Do not attempt to "
+          "publish anything to sibline yourself; the result is captured automatically."
+    )
+    cmd = WORKER_CMD.replace("{prompt}", _shlex.quote(prompt)) if "{prompt}" in WORKER_CMD \
+        else f"{WORKER_CMD} {_shlex.quote(prompt)}"
+
+    if WORKER_SHELL:
+        argv = ["bash", "-lc", cmd]
+    else:
+        argv = _shlex.split(cmd)
+
+    log(f"task {req_id}: launching worker")
+    proc = await asyncio.create_subprocess_exec(
+        *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+
+    # Heartbeat while the worker runs, enforce deadline.
+    hb = 0
+    start = time.time()
+    try:
+        while True:
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+                break
+            except asyncio.TimeoutError:
+                hb += 1
+                elapsed = time.time() - start
+                if elapsed > deadline_s:
+                    proc.kill()
+                    await proc.wait()
+                    await _emit("task_error", {"error": "timeout", "detail": f"exceeded {deadline_s}s"})
+                    log(f"task {req_id}: TIMEOUT after {elapsed:.0f}s")
+                    return
+                await _emit("task_progress", {"heartbeat": hb, "elapsed_s": round(elapsed, 1)})
+                log(f"task {req_id}: heartbeat {hb} ({elapsed:.0f}s)")
+    except Exception as e:
+        await _emit("task_error", {"error": "worker_exception", "detail": repr(e)[:300]})
+        log(f"task {req_id}: worker exception {e!r}")
+        return
+
+    out = (stdout or b"").decode("utf-8", errors="replace").strip()
+    rc = proc.returncode
+    if rc != 0:
+        await _emit("task_error", {"error": "worker_nonzero", "rc": rc, "detail": out[-1000:]})
+        log(f"task {req_id}: worker rc={rc} -> task_error")
+        return
+    await _emit("task_result", {"result": out[-8000:], "rc": rc, "elapsed_s": round(time.time() - start, 1)})
+    log(f"task {req_id}: RESULT published ({len(out)} chars, {time.time()-start:.0f}s)")
 
 
 async def main() -> None:
@@ -210,20 +330,33 @@ async def main() -> None:
                     log(f"auto-pong -> {direct} + sibline.{AGENT}.outbox req_id={env.get('id')}")
                     return
 
+            # Delegated-work RPC: a task_request from a known agent spawns the
+            # worker (non-blocking) which publishes the lifecycle back.
+            if isinstance(env, dict) and env.get("kind") in TASK_KINDS:
+                asyncio.create_task(run_task_worker(nc, env, source))
+                return
+
             bridge_to_mailbox(ts, msg.subject, body, source)
         return on_msg
 
+    # Push consumers need an explicit deliver_subject on newer nats-py (the
+    # auto-generated default was removed); older clients ignored it. Pass it via
+    # ConsumerConfig so this works across nats-py versions. durable+deliver_subject
+    # together bind/create a push consumer.
+    from nats.js.api import ConsumerConfig as _CC
     await js.subscribe(
         INBOX_SUBJECT,
         durable=INBOX_DURABLE,
         cb=make_handler(INBOX_LOG, "inbox"),
         manual_ack=True,
+        config=_CC(durable_name=INBOX_DURABLE, deliver_subject=nc.new_inbox()),
     )
     await js.subscribe(
         BROADCAST_SUBJECT,
         durable=BROADCAST_DURABLE,
         cb=make_handler(BROADCAST_LOG, "broadcast"),
         manual_ack=True,
+        config=_CC(durable_name=BROADCAST_DURABLE, deliver_subject=nc.new_inbox()),
     )
 
     stop = asyncio.Event()
