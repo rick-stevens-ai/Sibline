@@ -66,9 +66,14 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 DAEMON_LOG = LOG_DIR / "sibline-subscriber.log"
 NATS_ONLY_KINDS = {"smoke", "smoke_ack", "status", "heartbeat", "ping", "pong", "rr_probe"}
 
-# 5-agent mesh allowlist (elders + trickster trio). Only these are valid
-# pong requesters/targets for reachability probes.
-AGENT_NAMES = {"ollie", "kukla", "ikto", "tsisdu", "yeil"}
+# Sibline mesh allowlist. Config-driven (SIBLINE_ROSTER env, comma-separated)
+# so onboarding a new peer is a one-line change, not a hardcode edit in each file.
+# Elders: ollie, kukla. Trickster trio: ikto, tsisdu, yeil. Fleet: paradise, lost, prokko.
+# Only these are valid pong requesters/targets for reachability probes.
+_DEFAULT_ROSTER = "ollie,kukla,ikto,tsisdu,yeil,paradise,lost,prokko"
+AGENT_NAMES = {
+    a.strip() for a in os.environ.get("SIBLINE_ROSTER", _DEFAULT_ROSTER).split(",") if a.strip()
+}
 
 # Reachability-probe kinds that trigger an auto-pong. 'ping' = elder standard,
 # 'rr_probe' = trickster round-robin vocabulary. Both must be answered.

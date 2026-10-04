@@ -85,8 +85,14 @@ BROADCAST_DURABLE = f"{AGENT}-broadcast-consumer-v1"
 
 # Liveness/probe traffic is kept NATS-only (never bridged to the local mailbox).
 NOISE_KINDS = {"smoke", "smoke_ack", "status", "heartbeat", "ping", "pong", "rr_probe"}
-# Recognized agents in the 5-agent mesh: elders (ollie, kukla) + trickster trio.
-AGENT_NAMES = {"ollie", "kukla", "ikto", "tsisdu", "yeil"}
+# Recognized agents in the Sibline mesh. Config-driven so onboarding a new peer
+# is a one-line env change (or a default bump) rather than a 3-file hardcode edit.
+# Elders: ollie (CherryRd), kukla (m1). Trickster trio: ikto, tsisdu, yeil (sparks).
+# Fleet agents: paradise (nuc13), lost (nuc7), prokko (home host).
+_DEFAULT_ROSTER = "ollie,kukla,ikto,tsisdu,yeil,paradise,lost,prokko"
+AGENT_NAMES = {
+    a.strip() for a in os.environ.get("SIBLINE_ROSTER", _DEFAULT_ROSTER).split(",") if a.strip()
+}
 # Envelope kinds that trigger an auto-pong liveness reply.
 PING_KINDS = {"ping", "rr_probe"}
 NOISE_SUFFIXES = (".smoke", ".status", ".ping", ".pong", ".heartbeat")
