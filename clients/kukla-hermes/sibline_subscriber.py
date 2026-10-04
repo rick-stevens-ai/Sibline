@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import hashlib
+import hmac
 import json
 import os
 import re as _re
@@ -42,6 +44,8 @@ import shlex as _shlex
 import signal
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -113,6 +117,18 @@ WORKER_SHELL = os.environ.get("SIBLINE_WORKER_SHELL", "1").strip() == "1"
 # Dedupe: remember req_ids we've already started so a redelivery doesn't double-run.
 _SEEN_TASKS: set = set()
 
+# ----- push-to-wake (optional) -----
+# Hosts whose agent must be WOKEN on an inbound note (rather than running the task
+# in-daemon) set SIBLINE_WAKE_URL to a local Hermes webhook that spawns an agent
+# turn. Best-effort, 429-aware. If SIBLINE_WORKER_CMD is also set, task_request is
+# handled by the worker and wake is used only for other meaningful notes.
+#   SIBLINE_WAKE_URL      e.g. http://127.0.0.1:8644/webhooks/ikto-sibling
+#   SIBLINE_WEBHOOK_SECRET  HMAC secret for X-Hub-Signature-256
+#   SIBLINE_WAKE_ON_BROADCAST  "1" to also wake on broadcast notes (default 0)
+WAKE_URL = os.environ.get("SIBLINE_WAKE_URL", "").strip()
+WEBHOOK_SECRET = os.environ.get("SIBLINE_WEBHOOK_SECRET", "").strip()
+WAKE_ON_BROADCAST = os.environ.get("SIBLINE_WAKE_ON_BROADCAST", "0").strip() == "1"
+
 
 def load_password() -> str:
     if not CREDS_FILE.exists():
@@ -166,6 +182,59 @@ def bridge_to_mailbox(ts: str, subject: str, body: str, source: str) -> None:
         log(f"bridged -> mailbox (id={mail_entry['id']}, src={source})")
     except Exception as e:
         log(f"mailbox bridge failed: {e}")
+
+
+async def fire_push_to_wake(env: dict, source: str) -> None:
+    """POST a note to the local Hermes webhook so the agent wakes and acts.
+
+    Best-effort; never raises. 429-aware with exponential backoff so a restart
+    replay burst drains gracefully. Enabled only when SIBLINE_WAKE_URL is set.
+    """
+    if not WAKE_URL:
+        return
+    if not WEBHOOK_SECRET:
+        log("push-to-wake SKIPPED: SIBLINE_WAKE_URL set but no SIBLINE_WEBHOOK_SECRET")
+        return
+    mid = env.get("id") if isinstance(env, dict) else "?"
+    sender = env.get("from", PEER) if isinstance(env, dict) else PEER
+    body = env.get("body") if isinstance(env, dict) else None
+    text = body if isinstance(body, str) else json.dumps(body if body is not None else env)
+    payload = json.dumps({
+        "text": text,
+        "_meta": {
+            "received_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "from": sender, "source": source,
+            "msg_id": mid, "kind": env.get("kind") if isinstance(env, dict) else None,
+        },
+    }).encode()
+    sig = "sha256=" + hmac.new(WEBHOOK_SECRET.encode(), payload, hashlib.sha256).hexdigest()
+
+    def _post():
+        req = urllib.request.Request(
+            WAKE_URL, data=payload,
+            headers={"Content-Type": "application/json", "X-Hub-Signature-256": sig})
+        return urllib.request.urlopen(req, timeout=10)
+
+    delay = 0.5
+    for attempt in range(1, 6):
+        try:
+            r = await asyncio.to_thread(_post)
+            log(f"push-to-wake fired (id={mid}) -> {WAKE_URL} HTTP {r.status}"
+                + (f" after {attempt} tries" if attempt > 1 else ""))
+            return
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < 5:
+                ra = e.headers.get("Retry-After") if e.headers else None
+                wait = float(ra) if (ra and ra.isdigit()) else delay
+                log(f"push-to-wake 429 (id={mid}) attempt {attempt}/5, backoff {wait}s")
+                await asyncio.sleep(wait)
+                delay = min(delay * 2, 8.0)
+                continue
+            log(f"push-to-wake HTTP {e.code}: {e.reason} (id={mid} url={WAKE_URL})")
+            return
+        except Exception as e:
+            log(f"push-to-wake failed (id={mid}): {e}")
+            return
 
 
 async def run_task_worker(nc, env: dict, source: str) -> None:
@@ -330,13 +399,30 @@ async def main() -> None:
                     log(f"auto-pong -> {direct} + sibline.{AGENT}.outbox req_id={env.get('id')}")
                     return
 
-            # Delegated-work RPC: a task_request from a known agent spawns the
-            # worker (non-blocking) which publishes the lifecycle back.
+            # Delegated-work RPC: a task_request from a known agent.
+            #  - if a worker command is configured, the daemon runs it and
+            #    publishes the lifecycle back (self-contained, no agent wake).
+            #  - else, fall through to push-to-wake so the host's agent handles it
+            #    (it must follow the sibline-help skill to reply).
             if isinstance(env, dict) and env.get("kind") in TASK_KINDS:
-                asyncio.create_task(run_task_worker(nc, env, source))
+                if WORKER_CMD:
+                    asyncio.create_task(run_task_worker(nc, env, source))
+                    return
+                # no worker -> wake the agent to handle the task
+                bridge_to_mailbox(ts, msg.subject, body, source)
+                if WAKE_URL:
+                    await fire_push_to_wake(env, source)
                 return
 
             bridge_to_mailbox(ts, msg.subject, body, source)
+
+            # Push-to-wake for other meaningful notes (not noise), if enabled.
+            if WAKE_URL and not any(msg.subject.endswith(s) for s in NOISE_SUFFIXES):
+                if isinstance(env, dict) and env.get("kind") in NOISE_KINDS:
+                    return
+                if source == "broadcast" and not WAKE_ON_BROADCAST:
+                    return
+                await fire_push_to_wake(env, source)
         return on_msg
 
     # Push consumers need an explicit deliver_subject on newer nats-py (the
