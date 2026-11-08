@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# nuntio launcher: use the first existing Python that can import nats-py.
+for PY in "$HOME/.hermes/venvs/sibline/bin/python" \
+          "$HOME/.hermes/hermes-agent/venv/bin/python" \
+          "$HOME/.hermes/hermes-agent/.venv/bin/python" \
+          /opt/anaconda3/bin/python3 \
+          "$HOME/miniforge3/bin/python" \
+          /usr/local/bin/python3 \
+          /usr/bin/python3 python3; do
+  if { [[ "$PY" == */* ]] && [[ -x "$PY" ]]; } || command -v "$PY" >/dev/null 2>&1; then
+    if "$PY" -c 'import nats' >/dev/null 2>&1; then
+      exec "$PY" "$HOME/.local/bin/nuntio.py" "$@"
+    fi
+  fi
+done
+echo "nuntio: no Python with nats-py found" >&2
+exit 1
