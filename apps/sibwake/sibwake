@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+for PY in ~/.hermes/venvs/sibline/bin/python ~/.hermes/hermes-agent/venv/bin/python /opt/anaconda3/bin/python3 /usr/bin/python3 python3; do
+  if command -v "$PY" >/dev/null 2>&1 && "$PY" -c "import nats" >/dev/null 2>&1; then exec "$PY" ~/.local/bin/sibwake.py "$@"; fi
+done
+echo "sibwake: no python with nats-py" >&2; exit 1
