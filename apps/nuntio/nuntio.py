@@ -33,7 +33,8 @@ def _pw():
     paths=[]
     ef=_o.environ.get("SIBLINE_CREDS_FILE")
     if ef: paths.append(_o.path.expanduser(ef))
-    paths += ["/tmp/.nats_creds", _o.path.expanduser("~/.config/sibline/cred"),
+    paths += ["/tmp/.nats_creds", _o.path.expanduser("~/.hermes/nats/sibline-cred"),
+              _o.path.expanduser("~/.config/sibline/cred"),
               _o.path.expanduser("~/.config/sibling-nats/cred"),
               _o.path.expanduser("~/.hermes/secrets/nats.env")]
     for p in paths:
@@ -50,7 +51,7 @@ def _user():
     # user = agent id; broker ACL allows the known family users. default by hostname mapping.
     h=socket.gethostname().split(".")[0].lower()
     m={"mini":"kukla","macmini":"kukla","cherryrd":"ollie","promaxgb10-95fe":"tsisdu",
-       "spark-36ac":"ikto","promaxgb10-9611":"yeil","nuc13":"paradise","nuc7":"lost",
+       "spark-36ac":"ikto","promaxgb10-9611":"yeil","nuc13":"paradise","nuc7":"lost","stevens-nuc13rngi9":"paradise","stevens-nuc7i5bnh":"lost",
        "prokko":"prokko","ricksmacstudio":"notdoneyet","uicgpu01":"livewire",
        "monera":"nevermind"}
     return os.environ.get("NUNTIO_USER") or m.get(h,"kukla")
